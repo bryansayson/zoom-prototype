@@ -206,7 +206,8 @@ class PinchToZoom extends Component {
 
   render() {
     return (
-      <div style={{ display: "flex", flexDirection: "row" }}>
+      <React.Fragment>
+        <div style={{ maxWidth: 200 }}>{JSON.stringify(this.state)}</div>
         <div
           ref={this.assignRef}
           className="PinchToZoom"
@@ -237,8 +238,7 @@ class PinchToZoom extends Component {
             }}
           />
         </div>
-        <div style={{ maxWidth: 200 }}>{JSON.stringify(this.state)}</div>
-      </div>
+      </React.Fragment>
     );
   }
 }
