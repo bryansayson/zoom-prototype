@@ -92,6 +92,10 @@ class PinchToZoom extends Component {
       cachedEvent => cachedEvent.pointerId === event.pointerId
     );
   };
+  updateEventIfItExists = event => {
+    const indexForThisPointer = this.getIndexOfEvent(event);
+    this.eventCache[indexForThisPointer] = event;
+  };
   transformCoordinates = zoomingMidPoint => {
     // get midpoint and return the midpoint on larger image
     const leftTouchPosition = zoomingMidPoint.x - this.boundingClientRect.left;
@@ -126,36 +130,35 @@ class PinchToZoom extends Component {
     this.setState({ isZooming: false }); // TODO - remove
   };
   handlePointerDown = event => {
+    console.log("pointer down");
     event.persist();
-    this.eventCache.push(event); // TODO - actually make this work appropriately for tablet
-    // this.panImage(event);
+    // this is either a single tap, single click, or the first touch
+    // event of a zoom in. in this case we always add the event.
+    if (!this.eventCache.length) {
+      this.eventCache.push(event);
+      this.setState({ isZooming: true });
+    } else {
+      // In this case we already have either a single click,
+      // a single tap or a single finger on a pinch action.
+      // we will use the event timestamp to figure out
+      // how to handle these scenarios.
+      this.eventCache = [];
+      this.setState({ isZooming: false });
+    }
   };
   handlePointerMove = event => {
     event.persist();
-    const indexForThisPointer = this.getIndexOfEvent(event);
-    // console.log("pointer is moving " + indexForThisPointer);
-    // If the current pointer is already in the cache, update the cached value
-    // console.log("updating " + indexForThisPointer);
-    this.eventCache[indexForThisPointer] = event;
-    // console.log(getPointFromTouch(event, this.container));
-
+    console.log("pointer move");
+    // This is for handling zooming in and out and panning
+    this.updateEventIfItExists(event);
     if (this.eventCache.length === 1) {
       console.log("there is only one pointer");
-      // TODO - handle panning here
-      // this.panImage(event);
-      this.setState({ isZooming: true });
       const pointA = getPointFromTouch(this.eventCache[0], this.container);
       this.transformCoordinates(pointA);
     }
 
     if (this.eventCache.length === 2) {
       console.log("there are two pointers!");
-      this.setState({ isZooming: true });
-      // console.log(this.eventCache[0].pointerId);
-      // console.log(getPointFromTouch(this.eventCache[0], this.container));
-      // console.log(this.eventCache[1].pointerId);
-      // console.log(getPointFromTouch(this.eventCache[1], this.container));
-      // If there are two pointers, calculate the distance between them
       const currentDistanceX = Math.abs(
         this.eventCache[0].clientX - this.eventCache[1].clientX
       );
@@ -213,9 +216,6 @@ class PinchToZoom extends Component {
           className="PinchToZoom"
           onPointerDown={this.handlePointerDown}
           onPointerMove={this.handlePointerMove}
-          onPointerUp={this.removeEventFromCache}
-          onPointerOut={this.removeEventFromCache}
-          onPointerLeave={this.removeEventFromCache}
           style={{
             touchAction: this.state.touchAction,
             position: "relative",
