@@ -38,6 +38,7 @@
 
 import React, { Component } from "react";
 import "./PinchToZoom.css";
+import { red } from "color-name";
 // We always will assume that our images are square (since our image cruncher will have some problems with aspect ratio if we don't)
 const images = {
   600: "https://secure.img1-fg.wfcdn.com/im/95036494/resize-h600-w600%5Ecompr-r85/1040/104018557/Vart+Geunuine+Leather+Swivel+34%2522+Lounge+Chair+and+Ottoman.jpg",
@@ -119,11 +120,13 @@ class PinchToZoom extends Component {
 
   updateEventIfItExists = event => {
     const indexForThisPointer = this.getIndexOfEvent(event);
-    return (this.activePointers[indexForThisPointer] = {
-      current: event,
-      pointerId: event.pointerId,
-      previous: this.activePointers[indexForThisPointer].current
-    });
+    if (indexForThisPointer >= 0) {
+      this.activePointers[indexForThisPointer] = {
+        current: event,
+        pointerId: event.pointerId,
+        previous: this.activePointers[indexForThisPointer].current
+      };
+    }
   };
 
   getMidpointFromTouch = (event1, event2) => {
@@ -133,10 +136,13 @@ class PinchToZoom extends Component {
     return midPoint;
   };
 
-  removeEventFromCache = event => {
-    this.activePointers.splice(this.getIndexOfEvent(event), 1);
-    if (this.activePointers.length < 2) {
-      this.setState({ previousDistanceBetweenPointers: 0 });
+  handlePointerUp = event => {
+    if (event.pointerType === "touch") {
+      // if (event.pointerType === "touch" && this.activePointers.length >= 2) {
+      this.activePointers.splice(this.getIndexOfEvent(event), 1);
+      if (this.activePointers.length < 2) {
+        this.setState({ previousDistanceBetweenPointers: 0 });
+      }
     }
   };
 
@@ -185,19 +191,19 @@ class PinchToZoom extends Component {
             method: "drag"
           });
         } else {
-          if (timeDiff < 175) {
-            if (this.state.zoomFactor === MIN_ZOOM_FACTOR) {
-              this.handleZoomPan({
-                zoomingMidPoint: doubleTapPoint
-              });
-              this.setState({ zoomFactor: MAX_ZOOM_FACTOR });
-            } else {
-              this.setState({
-                zoomFactor: MIN_ZOOM_FACTOR,
-                previousDistanceBetweenPointers: 0
-              });
-            }
-          }
+          // if (timeDiff < 175) {
+          //   if (this.state.zoomFactor === MIN_ZOOM_FACTOR) {
+          //     this.handleZoomPan({
+          //       zoomingMidPoint: doubleTapPoint
+          //     });
+          //     this.setState({ zoomFactor: MAX_ZOOM_FACTOR });
+          //   } else {
+          //     this.setState({
+          //       zoomFactor: MIN_ZOOM_FACTOR,
+          //       previousDistanceBetweenPointers: 0
+          //     });
+          //   }
+          // }
         }
       }
     }
@@ -263,6 +269,8 @@ class PinchToZoom extends Component {
         (currentFingerMidpoint.y - previousFingerMidpoint.y)
       : topTouchPosition * imageSizeRatioHeight);
     this.setState(prevState => {
+      console.log(currentFingerMidpoint.x - previousFingerMidpoint.x);
+      console.log(currentFingerMidpoint.y - previousFingerMidpoint.y);
       return {
         zoomFactor,
         position: {
@@ -296,10 +304,9 @@ class PinchToZoom extends Component {
 
   handlePointerMove = event => {
     event.persist();
-    // This is for handling zooming in and out and panning
     this.updateEventIfItExists(event);
-    if (this.state.pointerType === "mouse") {
-      if (this.activePointers.length === 1) {
+    if (event.pointerType === "mouse") {
+      if (this.activePointers.length) {
         const pointA = getPointFromTouch(
           this.activePointers[0].current,
           this.container
@@ -307,7 +314,7 @@ class PinchToZoom extends Component {
         this.handleZoomPan({ zoomingMidPoint: pointA });
       }
     }
-    if (this.state.pointerType === "touch") {
+    if (event.pointerType === "touch") {
       if (this.activePointers.length === 1) {
         const pointA = getPointFromTouch(event, this.container);
         this.handleZoomPan({ zoomingMidPoint: pointA, method: "drag" });
@@ -380,12 +387,13 @@ class PinchToZoom extends Component {
           {" "}
           Dragging Midpoint: {JSON.stringify(this.state.draggingMidpoint)}
         </div>
+        <div> Active Pointers: {this.activePointers.length}</div>
         <div
           ref={this.assignRef}
           className="PinchToZoom"
           onPointerDown={this.handlePointerDown}
           onPointerMove={this.handlePointerMove}
-          onPointerUp={this.removeEventFromCache}
+          onPointerUp={this.handlePointerUp}
           style={{
             touchAction: this.state.touchAction,
             position: "relative",
@@ -394,6 +402,34 @@ class PinchToZoom extends Component {
             overflow: "hidden"
           }}
         >
+          {this.state.draggingMidpoint && (
+            <div
+              style={{
+                position: "absolute",
+                width: 5,
+                height: 5,
+                background: "red",
+                borderRadius: "50%",
+                left: this.state.draggingMidpoint.x,
+                top: this.state.draggingMidpoint.y,
+                zIndex: 3000
+              }}
+            />
+          )}
+          {this.activePointers.map(pointer => {
+            <div
+              style={{
+                position: "absolute",
+                width: 200,
+                height: 200,
+                background: "blue",
+                borderRadius: "50%",
+                left: getPointFromTouch(pointer.current, this.container).x,
+                top: getPointFromTouch(pointer.current, this.container).y,
+                zIndex: 3000
+              }}
+            />;
+          })}
           <img src={images[600]} alt="Click to zoom" />
           <img
             src={images[1600]}
