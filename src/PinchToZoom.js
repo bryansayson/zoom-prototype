@@ -41,22 +41,27 @@ import "./PinchToZoom.css";
 // We always will assume that our images are square (since our image cruncher will have some problems with aspect ratio if we don't)
 const images = {
   600: "https://secure.img1-fg.wfcdn.com/im/95036494/resize-h600-w600%5Ecompr-r85/1040/104018557/Vart+Geunuine+Leather+Swivel+34%2522+Lounge+Chair+and+Ottoman.jpg",
-  800: "https://secure.img1-fg.wfcdn.com/im/90094606/resize-h800-w800%5Ecompr-r85/1040/104018557/Vart+Geunuine+Leather+Swivel+34%2522+Lounge+Chair+and+Ottoman.jpg",
   1600: "https://secure.img1-fg.wfcdn.com/im/90094606/resize-h1600-w1600%5Ecompr-r85/1040/104018557/Vart+Geunuine+Leather+Swivel+34%2522+Lounge+Chair+and+Ottoman.jpg"
 };
 
+const MIN_ZOOM_FACTOR = 1;
+// TODO move this inside state and derive from current zoomed image
+const MAX_ZOOM_FACTOR = 2.666;
+const MAX_DELTA = MAX_ZOOM_FACTOR - MIN_ZOOM_FACTOR;
+// we use this to multiply zoom gestures
+const ZOOM_ASSIST_FACTOR = 3;
+
 const getPointFromTouch = (touch, element) => {
   const rect = element.getBoundingClientRect(); // TODO - don't always do this - maybe handle it on resize?
+  if (!touch) {
+    // console.log(new Error().stack);
+    // console.error("no touch");
+  }
   return {
     x: touch.clientX - rect.left,
     y: touch.clientY - rect.top
   };
 };
-
-const getDistanceBetweenPointers = (pointerA, pointerB) =>
-  Math.sqrt(
-    Math.pow(pointerA.y - pointerB.y, 2) + Math.pow(pointerA.x - pointerB.x, 2)
-  );
 
 const getMidpoint = (pointerA, pointerB) => ({
   x: (pointerA.x + pointerB.x) / 2,
@@ -65,157 +70,322 @@ const getMidpoint = (pointerA, pointerB) => ({
 
 class PinchToZoom extends Component {
   state = {
-    isZooming: false,
     touchAction: "none",
     position: {
       top: 0,
       left: 0
-    }
+    },
+    lastFingerPosition: {
+      top: 0,
+      left: 0
+    },
+    zoomFactor: MIN_ZOOM_FACTOR,
+    maxZoomWidthBound: 0,
+    maxZoomHeightBound: 0,
+    zoomImageBoundingClientRect: 0,
+    currentZoomedImageWidth: 0,
+    currentZoomedImageHeight: 0,
+    previousDistanceBetweenPointers: 0,
+    draggingMidpoint: null
   };
   container = null;
   zoomImage = null;
   boundingClientRect = {};
   zoomImageBoundingClientRect = {};
-  // An array containing the pointer events for each pointer on the element
-  eventCache = [];
-  previousDistanceBetweenPointers = -1;
+  activePointers = [];
+
+  setZoomImageBoundingClientRect = () => {
+    this.zoomImageBoundingClientRect = this.zoomImage.getBoundingClientRect();
+    this.setState({
+      zoomImageBoundingClientRect: this.zoomImageBoundingClientRect
+    });
+  };
+
   assignRef = ref => {
     this.container = ref;
     this.boundingClientRect = this.container.getBoundingClientRect();
   };
+
   assignZoomImageRef = ref => {
     this.zoomImage = ref;
-    this.zoomImageBoundingClientRect = this.zoomImage.getBoundingClientRect();
+    this.setZoomImageBoundingClientRect();
   };
+
   getIndexOfEvent = event => {
-    return this.eventCache.findIndex(
+    return this.activePointers.findIndex(
       cachedEvent => cachedEvent.pointerId === event.pointerId
     );
   };
+
   updateEventIfItExists = event => {
     const indexForThisPointer = this.getIndexOfEvent(event);
-    this.eventCache[indexForThisPointer] = event;
+    return (this.activePointers[indexForThisPointer] = {
+      current: event,
+      pointerId: event.pointerId,
+      previous: this.activePointers[indexForThisPointer].current
+    });
   };
-  transformCoordinates = zoomingMidPoint => {
+
+  getMidpointFromTouch = (event1, event2) => {
+    const pointA = getPointFromTouch(event1, this.container);
+    const pointB = event2 ? getPointFromTouch(event2, this.container) : null;
+    const midPoint = !pointB ? event1 : getMidpoint(pointA, pointB);
+    return midPoint;
+  };
+
+  removeEventFromCache = event => {
+    this.activePointers.splice(this.getIndexOfEvent(event), 1);
+    if (this.activePointers.length < 2) {
+      this.setState({ previousDistanceBetweenPointers: 0 });
+    }
+  };
+
+  handlePointerDown = event => {
+    event.persist();
+
+    if (event.pointerType === "mouse") {
+      if (!this.activePointers.length) {
+        this.activePointers.push({
+          current: event,
+          previous: null,
+          pointerId: event.pointerId
+        });
+        this.setState({ zoomFactor: MAX_ZOOM_FACTOR });
+      } else {
+        this.activePointers = [];
+        this.setState({ zoomFactor: MIN_ZOOM_FACTOR });
+      }
+    }
+
+    if (event.pointerType === "touch") {
+      this.activePointers.push({
+        current: event,
+        previous: null,
+        pointerId: event.pointerId
+      });
+      if (this.activePointers.length > 1) {
+        const oldPointTimeStamp = this.activePointers[
+          this.activePointers.length - 2
+        ].current.timeStamp;
+        const newPointTimeStamp = event.timeStamp;
+        const timeDiff = newPointTimeStamp - oldPointTimeStamp;
+        const doubleTapPoint = getPointFromTouch(event, this.container);
+        // We have 2 fingers down
+        if (this.activePointers.length > 1) {
+          // console.log("active touch pointers ", this.activePointers);
+          const midPoint = this.getMidpointFromTouch(
+            this.activePointers[0].current,
+            !!this.activePointers[1] ? this.activePointers[1].current : null
+          );
+          this.setState({
+            zoomFactor: MIN_ZOOM_FACTOR
+          });
+          this.handleZoomPan({
+            zoomingMidPoint: midPoint,
+            method: "drag"
+          });
+        } else {
+          if (timeDiff < 175) {
+            if (this.state.zoomFactor === MIN_ZOOM_FACTOR) {
+              this.handleZoomPan({
+                zoomingMidPoint: doubleTapPoint
+              });
+              this.setState({ zoomFactor: MAX_ZOOM_FACTOR });
+            } else {
+              this.setState({
+                zoomFactor: MIN_ZOOM_FACTOR,
+                previousDistanceBetweenPointers: 0
+              });
+            }
+          }
+        }
+      }
+    }
+  };
+
+  handleZoomPan = ({
+    zoomingMidPoint,
+    zoomChangeFactor = 0,
+    method = "pan"
+  }) => {
+    // Two mothods - drag and pan
+    const zoomFactor = Math.max(
+      Math.min(this.state.zoomFactor + zoomChangeFactor, MAX_ZOOM_FACTOR),
+      MIN_ZOOM_FACTOR
+    );
     // get midpoint and return the midpoint on larger image
     const leftTouchPosition = zoomingMidPoint.x - this.boundingClientRect.left;
     const topTouchPosition = zoomingMidPoint.y - this.boundingClientRect.top;
+    const currentZoomedImageWidth = this.boundingClientRect.width * zoomFactor;
+    const currentZoomedImageHeight =
+      this.boundingClientRect.height * zoomFactor;
     // keep these separate do not assume all images are square
     const imageSizeRatioWidth =
-      this.zoomImageBoundingClientRect.width / this.boundingClientRect.width;
+      currentZoomedImageWidth / this.boundingClientRect.width;
     const imageSizeRatioHeight =
-      this.zoomImageBoundingClientRect.height / this.boundingClientRect.height;
+      currentZoomedImageHeight / this.boundingClientRect.height;
     // TODO make zoom bound width and height separate
+    // TODO make 1 + zoomChangeFactor a variable
     const maxZoomWidthBound =
-      this.boundingClientRect.width - this.zoomImageBoundingClientRect.width;
+      this.boundingClientRect.width - currentZoomedImageWidth;
     const maxZoomHeightBound =
-      this.boundingClientRect.height - this.zoomImageBoundingClientRect.height;
-    const imageOffsetLeft =
-      -(leftTouchPosition * imageSizeRatioWidth) +
-      this.boundingClientRect.width / 2;
-    const imageOffsetTop =
-      -(topTouchPosition * imageSizeRatioHeight) +
-      this.boundingClientRect.height / 2;
-    this.setState({
-      position: {
-        left: Math.min(0, Math.max(imageOffsetLeft, maxZoomWidthBound)),
-        top: Math.min(0, Math.max(imageOffsetTop, maxZoomHeightBound))
-      }
+      this.boundingClientRect.height - currentZoomedImageHeight;
+    const currentFingerMidpoint =
+      method === "drag" &&
+      typeof this.activePointers[0] === "object" &&
+      this.activePointers[0] !== null &&
+      this.activePointers[0].current
+        ? this.getMidpointFromTouch(
+            typeof this.activePointers[0] !== "undefined"
+              ? this.activePointers[0].current
+              : null,
+            typeof this.activePointers[1] !== "undefined"
+              ? this.activePointers[1].current
+              : null
+          )
+        : {};
+    const previousFingerMidpoint =
+      method === "drag" &&
+      typeof this.activePointers[0] === "object" &&
+      this.activePointers[0] !== null &&
+      this.activePointers[0].previous
+        ? this.getMidpointFromTouch(
+            !!this.activePointers[0] ? this.activePointers[0].previous : null,
+            !!this.activePointers[1] ? this.activePointers[1].previous : null
+          )
+        : {};
+    const imageOffsetLeft = -(method === "drag" && this.state.draggingMidpoint
+      ? this.state.draggingMidpoint.x +
+        (currentFingerMidpoint.x - previousFingerMidpoint.x)
+      : leftTouchPosition * imageSizeRatioWidth);
+    const imageOffsetTop = -(method === "drag" && this.state.draggingMidpoint
+      ? this.state.draggingMidpoint.y +
+        (currentFingerMidpoint.y - previousFingerMidpoint.y)
+      : topTouchPosition * imageSizeRatioHeight);
+    this.setState(prevState => {
+      return {
+        zoomFactor,
+        position: {
+          left: Math.min(0, Math.max(imageOffsetLeft, maxZoomWidthBound)),
+          top: Math.min(0, Math.max(imageOffsetTop, maxZoomHeightBound))
+        },
+        maxZoomWidthBound,
+        maxZoomHeightBound,
+        currentZoomedImageWidth,
+        currentZoomedImageHeight,
+        ...(method === "drag"
+          ? {
+              draggingMidpoint:
+                zoomFactor === 1
+                  ? null
+                  : prevState.draggingMidpoint === null
+                  ? zoomingMidPoint
+                  : {
+                      x:
+                        prevState.draggingMidpoint.x +
+                        (currentFingerMidpoint.x - previousFingerMidpoint.x),
+                      y:
+                        prevState.draggingMidpoint.y +
+                        (currentFingerMidpoint.y - previousFingerMidpoint.y)
+                    }
+            }
+          : {})
+      };
     });
   };
-  removeEventFromCache = event => {
-    event.persist();
-    const index = this.getIndexOfEvent(event);
-    this.eventCache.splice(index, 1);
-    this.setState({ isZooming: false }); // TODO - remove
-  };
-  handlePointerDown = event => {
-    console.log("pointer down");
-    event.persist();
-    // this is either a single tap, single click, or the first touch
-    // event of a zoom in. in this case we always add the event.
-    if (!this.eventCache.length) {
-      this.eventCache.push(event);
-      this.setState({ isZooming: true });
-    } else {
-      // In this case we already have either a single click,
-      // a single tap or a single finger on a pinch action.
-      // we will use the event timestamp to figure out
-      // how to handle these scenarios.
-      this.eventCache = [];
-      this.setState({ isZooming: false });
-    }
-  };
+
   handlePointerMove = event => {
     event.persist();
-    console.log("pointer move");
     // This is for handling zooming in and out and panning
     this.updateEventIfItExists(event);
-    if (this.eventCache.length === 1) {
-      console.log("there is only one pointer");
-      const pointA = getPointFromTouch(this.eventCache[0], this.container);
-      this.transformCoordinates(pointA);
+    if (this.state.pointerType === "mouse") {
+      if (this.activePointers.length === 1) {
+        const pointA = getPointFromTouch(
+          this.activePointers[0].current,
+          this.container
+        );
+        this.handleZoomPan({ zoomingMidPoint: pointA });
+      }
     }
-
-    if (this.eventCache.length === 2) {
-      console.log("there are two pointers!");
-      const currentDistanceX = Math.abs(
-        this.eventCache[0].clientX - this.eventCache[1].clientX
-      );
-      const pointA = getPointFromTouch(this.eventCache[0], this.container);
-      const pointB = getPointFromTouch(this.eventCache[1], this.container);
-      const midPoint = getMidpoint(pointA, pointB);
-
-      if (currentDistanceX > this.previousDistanceBetweenPointers) {
-        // console.log("zooming in");
-        // increase zoom factor
-        // this.setState({ isZooming: true });
-      } else {
-        // decrease zoom factor
-        // this.setState({ isZooming: false });
+    if (this.state.pointerType === "touch") {
+      if (this.activePointers.length === 1) {
+        const pointA = getPointFromTouch(event, this.container);
+        this.handleZoomPan({ zoomingMidPoint: pointA, method: "drag" });
       }
 
-      this.previousDistanceBetweenPointers = currentDistanceX;
-      this.transformCoordinates(midPoint);
+      if (this.activePointers.length > 1) {
+        const currentDistanceX = Math.abs(
+          this.activePointers[0].current.clientX -
+            this.activePointers[1].current.clientX
+        );
+        const currentDistanceY = Math.abs(
+          this.activePointers[0].current.clientY -
+            this.activePointers[1].current.clientY
+        );
+        const currentDistance = Math.sqrt(
+          Math.pow(currentDistanceX, 2) + Math.pow(currentDistanceY, 2)
+        );
+        const pointA = getPointFromTouch(
+          this.activePointers[0].current,
+          this.container
+        );
+        const pointB = getPointFromTouch(
+          this.activePointers[1].current,
+          this.container
+        );
+        const midPoint = getMidpoint(pointA, pointB);
+        let zoomChange = 0;
+
+        // previousDistanceBetweenPointers starts at 0 and we only want to do the calculation if it has been set to something other than 0
+        if (this.state.previousDistanceBetweenPointers) {
+          // check delta change to be a ceratin amount before doing calculation
+          const delta =
+            currentDistance - this.state.previousDistanceBetweenPointers;
+          const zoomRatio =
+            (delta / this.boundingClientRect.width) * ZOOM_ASSIST_FACTOR;
+
+          zoomChange = MAX_DELTA * zoomRatio;
+        }
+        this.setState({ previousDistanceBetweenPointers: currentDistance });
+        this.handleZoomPan({
+          zoomingMidPoint: midPoint,
+          zoomChangeFactor: zoomChange,
+          method: "drag"
+        });
+      }
     }
   };
 
-  // panImage = event => {
-  //   const pointFromTouch = getPointFromTouch(event, this.container);
-  //   // console.log(pointFromTouch);
-  //   const leftPosition = pointFromTouch.x - this.boundingClientRect.width;
-  //   const topPosition = pointFromTouch.y - this.boundingClientRect.height;
-  //   const imageSizeRatioWidth =
-  //     this.zoomImageBoundingClientRect.width / this.boundingClientRect.width;
-  //   const imageSizeRatioHeight =
-  //     this.zoomImageBoundingClientRect.height / this.boundingClientRect.height;
-  //   // console.log({
-  //   //   imageSizeRatioHeight,
-  //   //   imageSizeRatioWidth,
-  //   //   zoomBoundingClientRectHeight: this.zoomImageBoundingClientRect.height,
-  //   //   zoomBoundingClientRectWidth: this.zoomImageBoundingClientRect.width,
-  //   //   imageBoundingClientRectHeight: this.boundingClientRect.height,
-  //   //   imageBoundingClientRectWidth: this.boundingClientRect.width,
-  //   //   left: (leftPosition * imageSizeRatioWidth) / 2,
-  //   //   top: (topPosition * imageSizeRatioHeight) / 2
-  //   // });
-  //   this.setState({
-  //     position: {
-  //       left: leftPosition * imageSizeRatioWidth,
-  //       top: topPosition * imageSizeRatioHeight
-  //     }
-  //   });
-  // };
+  componentDidMount() {
+    this.setZoomImageBoundingClientRect();
+    window.addEventListener("resize", this.setZoomImageBoundingClientRect);
+    window.addEventListener(
+      "contextmenu",
+      function(e) {
+        e.preventDefault();
+      },
+      false
+    );
+  }
 
   render() {
     return (
       <React.Fragment>
-        <div style={{ maxWidth: 200 }}>{JSON.stringify(this.state)}</div>
+        <div> Zoom Factor: {this.state.zoomFactor} </div>
+        <div>
+          {" "}
+          Previous Distance: {this.state.previousDistanceBetweenPointers}{" "}
+        </div>
+        <div>
+          {" "}
+          Dragging Midpoint: {JSON.stringify(this.state.draggingMidpoint)}
+        </div>
         <div
           ref={this.assignRef}
           className="PinchToZoom"
           onPointerDown={this.handlePointerDown}
           onPointerMove={this.handlePointerMove}
+          onPointerUp={this.removeEventFromCache}
           style={{
             touchAction: this.state.touchAction,
             position: "relative",
@@ -232,9 +402,10 @@ class PinchToZoom extends Component {
             style={{
               position: "absolute",
               ...this.state.position,
-              visibility: this.state.isZooming ? "visible" : "hidden",
-              border: "10px solid red",
-              width: 1600
+              visibility:
+                this.state.zoomFactor > MIN_ZOOM_FACTOR ? "visible" : "hidden",
+              width:
+                this.boundingClientRect.width * this.state.zoomFactor || 1600
             }}
           />
         </div>
@@ -244,3 +415,11 @@ class PinchToZoom extends Component {
 }
 
 export default PinchToZoom;
+
+// TODO
+// stop relying on zooming state just rely on zoom factor === 1
+// fix max zoom factor to be not hard coded
+// dragging with one finger should move everything across the screen, look at leftoffset and top offset
+// hook zoom into scroll in / out
+// CTA button
+// look at request animation frame
