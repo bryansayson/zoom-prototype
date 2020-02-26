@@ -5,3 +5,10 @@
 .PinchToZoom {
   -webkit-touch-callout: none;
 }
+
+.ctaButton {
+  position: absolute;
+  bottom: 20px;
+  right: 25px;
+  padding: 5px 10px;
+}

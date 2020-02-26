@@ -313,6 +313,10 @@ class PinchToZoom extends Component {
                 this.containerDimensions.width * this.state.zoomFactor || 1600
             }}
           />
+          <button class="ctaButton" type="button" onClick="">
+            Click to Zoom{" "}
+            {this.state.zoomFactor === MIN_ZOOM_FACTOR ? "in" : "out"}
+          </button>
         </div>
       </React.Fragment>
     );
