@@ -294,23 +294,11 @@ class PinchToZoom extends Component {
             position: "relative",
             height: 600, // TODO - we should stop assuming 600x600px image here.
             width: 600,
-            overflow: "hidden"
+            overflow: "hidden",
+            cursor:
+              this.state.zoomFactor === MIN_ZOOM_FACTOR ? "zoom-in" : "zoom-out"
           }}
         >
-          {this.activePointers.map(pointer => {
-            <div
-              style={{
-                position: "absolute",
-                width: 200,
-                height: 200,
-                background: "blue",
-                borderRadius: "50%",
-                left: this.getPointFromTouch(pointer.current).x,
-                top: this.getPointFromTouch(pointer.current).y,
-                zIndex: 3000
-              }}
-            />;
-          })}
           <img src={images[600]} alt="Click to zoom" />
           <img
             src={images[1600]}
