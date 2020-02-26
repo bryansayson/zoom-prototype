@@ -4,37 +4,6 @@
  * and this github gist
  * https://gist.github.com/iammerrick/c4bbac856222d65d3a11dad1c42bdcca
  */
-/**
- * TODOs
- * ~~~ 1. Stop using async events, and rely on synthetic events instead
- * 2. Handle aspect ratio zooming in and out
- * 3. Request animation frame any time you zoom in and out
- * 4. Maybe introduce CSS animation for zoom behavior to make things feel smoother
- * 5. Start zooming the original image, replacing it with the higher res image once zoom has finished
- *
- *
- * Types of movement that someone can do:
- * - Tap
- * - Pinch - in/out
- * - Pan (can also occur while pinching) -
- *
- *
- * State:
- * - x/y offset of image zoomed
- * - zoom factor
- *
- * Assumptions:
- * - Image is always going to be square
- * - Hovered image is always going to be the same aspect ratio as the original
- */
-
-/**
- * 1 - 3
- * 1 - 600px
- * 2 - 1100 (1600-600) / 2 = 500px growth from 600
- * 3 - 1600px (1600-600) / 2 = 500px growth from 1100
- *
- */
 
 import React, { Component } from "react";
 import "./PinchToZoom.css";
@@ -46,16 +15,10 @@ const images = {
 };
 
 const MIN_ZOOM_FACTOR = 1;
-// TODO move this inside state and derive from current zoomed image
 const MAX_ZOOM_FACTOR = 2.666;
 const MAX_DELTA = MAX_ZOOM_FACTOR - MIN_ZOOM_FACTOR;
 // we use this to multiply zoom gestures
-const ZOOM_ASSIST_FACTOR = 0.5;
-
-const getMidpoint = (pointerA, pointerB) => ({
-  x: (pointerA.x + pointerB.x) / 2,
-  y: (pointerA.y + pointerB.y) / 2
-});
+const ZOOM_ASSIST_FACTOR = 3;
 
 class PinchToZoom extends Component {
   state = {
@@ -77,6 +40,7 @@ class PinchToZoom extends Component {
   containerDimensions = {};
   zoomImageDimensions = {};
   activePointers = [];
+  doubleTapTracker = [];
 
   setZoomImageBoundingClientRect = () => {
     this.zoomImageDimensions = this.zoomImageRef.getBoundingClientRect();
@@ -128,35 +92,6 @@ class PinchToZoom extends Component {
     }
   };
 
-  calculateZoomFactorChange = () => {
-    const currentDistanceX = Math.abs(
-      this.activePointers[0].current.clientX -
-        this.activePointers[1].current.clientX
-    );
-    const currentDistanceY = Math.abs(
-      this.activePointers[0].current.clientY -
-        this.activePointers[1].current.clientY
-    );
-    const currentDistance = Math.sqrt(
-      Math.pow(currentDistanceX, 2) + Math.pow(currentDistanceY, 2)
-    );
-    let zoomChange = 0;
-
-    // previousDistanceBetweenPointers starts at 0 and we only want to do the calculation if it has been set to something other than 0
-    if (this.state.previousDistanceBetweenPointers) {
-      // check delta change to be a ceratin amount before doing calculation
-      const delta =
-        currentDistance - this.state.previousDistanceBetweenPointers;
-      const zoomRatio =
-        (delta / this.containerDimensions.width) * ZOOM_ASSIST_FACTOR;
-
-      zoomChange = MAX_DELTA * zoomRatio;
-      return zoomChange;
-    }
-
-    this.setState({ previousDistanceBetweenPointers: currentDistance });
-  };
-
   handlePointerUp = event => {
     if (event.pointerType === "touch") {
       this.activePointers.splice(this.getIndexOfEvent(event), 1);
@@ -168,10 +103,9 @@ class PinchToZoom extends Component {
 
   handlePointerDown = event => {
     event.persist();
-
+    this.storeEvent(event);
     if (event.pointerType === "mouse" || event.pointerType === "pen") {
-      if (!this.activePointers.length) {
-        this.storeEvent(event);
+      if (this.state.zoomFactor === MIN_ZOOM_FACTOR) {
         const mouseClickPoint = this.getPointFromTouch(
           this.activePointers[0].current
         );
@@ -185,7 +119,28 @@ class PinchToZoom extends Component {
       }
     }
     if (event.pointerType === "touch") {
-      this.storeEvent(event);
+      this.doubleTapTracker.push(event);
+      if (this.doubleTapTracker.length > 1) {
+        const doubleTapPoint = this.getPointFromTouch(event);
+        const timeDiff =
+          event.timeStamp -
+          this.doubleTapTracker[this.doubleTapTracker.length - 2].timeStamp;
+        // this is the range that tells us
+        // the time elapsed is not as fast as a pinch
+        // but fast enough to be considered a double tap
+        if (timeDiff <= 250 && timeDiff >= 25) {
+          this.doubleTapTracker = [];
+          if (this.state.zoomFactor > MIN_ZOOM_FACTOR) {
+            this.setState({ zoomFactor: MIN_ZOOM_FACTOR });
+          } else {
+            this.handleZoomPan({
+              pointerLocation: doubleTapPoint,
+              zoomChangeFactor: MAX_ZOOM_FACTOR,
+              method: "drag"
+            });
+          }
+        }
+      }
     }
   };
 
@@ -193,22 +148,20 @@ class PinchToZoom extends Component {
     event.persist();
     this.updateEventIfItExists(event);
 
+    let pointerLocation = !!this.activePointers[0]
+      ? this.getPointFromTouch(this.activePointers[0].current)
+      : null;
+
     if (event.pointerType === "mouse" || event.pointerType === "pen") {
       if (this.activePointers.length) {
-        const pointerLocation = this.getPointFromTouch(
-          this.activePointers[0].current
-        );
         this.handleZoomPan({ pointerLocation });
       }
     }
 
     if (event.pointerType === "touch") {
-      const pointerLocation = this.getPointFromTouch(
-        this.activePointers[0].current
-      );
-      const previousPointerLocation = this.getPointFromTouch(
-        this.activePointers[0].previous
-      );
+      const previousPointerLocation = !!this.activePointers[0].previous
+        ? this.getPointFromTouch(this.activePointers[0].previous)
+        : null;
       if (this.activePointers.length === 1) {
         this.handleZoomPan({
           method: "drag",
@@ -218,8 +171,33 @@ class PinchToZoom extends Component {
       }
 
       if (this.activePointers.length > 1) {
+        const currentDistanceX = Math.abs(
+          this.activePointers[0].current.clientX -
+            this.activePointers[1].current.clientX
+        );
+        const currentDistanceY = Math.abs(
+          this.activePointers[0].current.clientY -
+            this.activePointers[1].current.clientY
+        );
+        const currentDistance = Math.sqrt(
+          Math.pow(currentDistanceX, 2) + Math.pow(currentDistanceY, 2)
+        );
+        let zoomChange = 0;
+
+        // previousDistanceBetweenPointers starts at 0 and we only want to do the calculation if it has been set to something other than 0
+        if (this.state.previousDistanceBetweenPointers) {
+          // check delta change to be a ceratin amount before doing calculation
+          const delta =
+            currentDistance - this.state.previousDistanceBetweenPointers;
+          const zoomRatio =
+            (delta / this.containerDimensions.width) * ZOOM_ASSIST_FACTOR;
+
+          zoomChange = MAX_DELTA * zoomRatio;
+        }
+
+        this.setState({ previousDistanceBetweenPointers: currentDistance });
         this.handleZoomPan({
-          zoomChangeFactor: this.calculateZoomFactorChange(),
+          zoomChangeFactor: zoomChange,
           method: "drag",
           pointerLocation,
           previousPointerLocation
@@ -234,12 +212,6 @@ class PinchToZoom extends Component {
     method = "pan",
     previousPointerLocation
   }) => {
-    // Zooming Midpoint should be optional. we only provide it on mouse events
-    // (since mouse events toggle zoom on and off) and the first time we zoom
-    // into an image, when a new zooming point has been introduced
-
-    // Don't touch these! these variables are the same with or without
-    // the pointerLocation
     const zoomFactor = Math.max(
       Math.min(this.state.zoomFactor + zoomChangeFactor, MAX_ZOOM_FACTOR),
       MIN_ZOOM_FACTOR
@@ -269,7 +241,6 @@ class PinchToZoom extends Component {
       this.containerDimensions.height / 2;
 
     if (method === "drag" && previousPointerLocation) {
-      console.log("happening");
       imageOffsetLeft =
         this.state.position.left +
         (pointerLocation.x - previousPointerLocation.x) * imageSizeRatioWidth;
@@ -363,10 +334,5 @@ class PinchToZoom extends Component {
 export default PinchToZoom;
 
 // TODO
-// stop relying on zooming state just rely on zoom factor === 1
-// fix max zoom factor to be not hard coded
-// dragging with one finger should move everything across the screen, look at leftoffset and top offset
 // hook zoom into scroll in / out
 // CTA button
-// look at request animation frame
-// touch.clientX is sometimes NULL
